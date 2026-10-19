@@ -1,2 +1,14 @@
 #archivo pdf
 *.pdf
+
+#certificados y claves
+*.crt
+*.key
+
+#archivos de log
+*.log
+
+#json de usuarios
+*.json
+
+.vscode/
