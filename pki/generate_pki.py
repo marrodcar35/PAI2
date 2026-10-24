@@ -4,6 +4,12 @@ from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 import ipaddress
+import json
+import os
+
+PKI_DIR = os.path.dirname(__file__)
+SERVER_DIR = os.path.join(PKI_DIR, "..", "server")
+USERS_FILE = os.path.join(SERVER_DIR, "users.json")
 
 def generate_key():
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -81,32 +87,51 @@ save_key(server_key, "server.key")
 save_cert(server_cert, "server.crt")
 
 # 3. GENERAR CERTIFICADO DEL CLIENTE (BYOD)
-print("[+] Generando Certificado del Cliente BYOD...")
-client_key = generate_key()
-client_subject = x509.Name([
-    x509.NameAttribute(NameOID.COUNTRY_NAME, "ES"),
-    x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Sevilla"),
-    x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Universidad U-Secure"),
-    x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "PDI"),
-    x509.NameAttribute(NameOID.COMMON_NAME, "profesor1"),
-])
+# 3. GENERAR CERTIFICADOS BYOD SEGÚN ROLES UNIVERSITARIOS (RF1 / RF5)
+# Se definen cuentas precargadas para PDI, PAS e Investigadores
+roles_usuarios = [
+    {"username": "profesor1", "role": "PDI", "pass": "PassProfesor123!", "key_file": "client.key", "cert_file": "client.crt"},
+    {"username": "pas1", "role": "PAS", "pass": "PassPas123!", "key_file": "pas1.key", "cert_file": "pas1.crt"},
+    {"username": "investigador1", "role": "Investigadores", "pass": "PassInv123!", "key_file": "investigador1.key", "cert_file": "investigador1.crt"}
+]
 
-client_cert = (
-    x509.CertificateBuilder()
-    .subject_name(client_subject)
-    .issuer_name(ca_subject)
-    .public_key(client_key.public_key())
-    .serial_number(x509.random_serial_number())
-    .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-    .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
-    .add_extension(
-        x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
-        critical=False
+users_db = {}
+
+for user in roles_usuarios:
+    print(f"[+] Generando Certificado BYOD para rol '{user['role']}': {user['username']}...")
+    u_key = generate_key()
+    u_subject = x509.Name([
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "ES"),
+        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Sevilla"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Universidad U-Secure"),
+        x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, user["role"]),
+        x509.NameAttribute(NameOID.COMMON_NAME, user["username"]),
+    ])
+
+    u_cert = (
+        x509.CertificateBuilder()
+        .subject_name(u_subject)
+        .issuer_name(ca_subject)
+        .public_key(u_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]),
+            critical=False
+        )
+        .sign(ca_key, hashes.SHA256())
     )
-    .sign(ca_key, hashes.SHA256())
-)
 
-save_key(client_key, "client.key")
-save_cert(client_cert, "client.crt")
+    save_key(u_key, user["key_file"])
+    save_cert(u_cert, user["cert_file"])
+    
+    # Registrar credencial en la BD
+    users_db[user["username"]] = user["pass"]
 
-print("PKI creada con éxito en la carpeta pki")
+# 4. GUARDAR BASE DE DATOS DE USUARIOS (RF5)
+os.makedirs(SERVER_DIR, exist_ok=True)
+with open(USERS_FILE, "w", encoding="utf-8") as f:
+    json.dump(users_db, f, indent=4)
+
+print("[✓] PKI y base de datos 'users.json' actualizadas con éxito.")
